@@ -1,0 +1,22 @@
+# Ignore environment file with secrets
+.env
+
+# Database and sqlite
+auth.db
+*.db
+*.sqlite3
+
+# Python cache and bytecode
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+
+# Editor/IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
