@@ -6,16 +6,12 @@ import requests
 import telebot
 from flask import Flask
 import logging
-from dotenv import load_dotenv
-
-# Load .env for local development (keeps secrets out of repo — .env is in .gitignore)
-load_dotenv()
 
 # ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-OWNER_ID = int(os.getenv("OWNER_ID", ""))
+OWNER_ID = int(os.getenv("OWNER_ID", "7447651332"))
 PORT = int(os.getenv("PORT", 8000))
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
