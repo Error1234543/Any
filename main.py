@@ -5,6 +5,7 @@ import telebot
 from flask import Flask
 import logging
 from threading import Thread
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -61,12 +62,17 @@ def ask_gemini(prompt, image_bytes=None):
 # ===== COMMANDS =====
 @bot.message_handler(commands=["start"])
 def start(msg):
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("📢 Join our Telegram Channel", url="https://t.me/+NGUSfa7ns8c4OTll")
+    )
     bot.reply_to(
         msg,
         "📘 **Send your doubt photo**\n"
         "💬 Or type your question in chat\n\n"
         "🚫 Adult content is strictly prohibited.",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=markup
     )
 
 # ===== TEXT & IMAGE HANDLERS =====
