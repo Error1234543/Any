@@ -64,7 +64,7 @@ def ask_gemini(prompt, image_bytes=None):
 def start(msg):
     markup = InlineKeyboardMarkup()
     markup.add(
-        InlineKeyboardButton("📢 Join our Telegram Channel", url="https://t.me/+NGUSfa7ns8c4OTll")
+        InlineKeyboardButton("📢 Join our Telegram Channel", url="https://t.me/prakash8307")
     )
     bot.reply_to(
         msg,
