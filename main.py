@@ -63,10 +63,13 @@ def ask_gemini(prompt, image_bytes=None):
             )
 
         except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response else "?"
-            return f"❌ Gemini HTTP Error: {status}"
-        except Exception as e:
-            return f"❌ Gemini Error: {e}"
+    if e.response is not None:
+        return f"❌ Gemini HTTP {e.response.status_code}: {e.response.text}"
+    else:
+        return f"❌ Gemini HTTP Error: {e}"
+
+except requests.exceptions.RequestException as e:
+    return f"❌ Network Error: {e}"
 
 # ===== COMMANDS =====
 @bot.message_handler(commands=["start"])
