@@ -1,126 +1,105 @@
 import os
-import base64
-import requests
+import json
 import telebot
-import time
+from telebot import types
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 import logging
-from flask import Flask
-from threading import Thread, Lock
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ===== CONFIG =====
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-PORT = int(os.getenv("PORT", 8000))
+# ---------------- CONFIG ----------------
+BOT_TOKEN = "8271928754:AAHcymB4lNx0xSdkoWQuS3bZosDlSuOvAdk"
+WEB_URL = "https://hdhdhsjsjsjdjsjshdjdhdjdjdjdu.netlify.app/"  # GitHub Pages URL
 
-if not BOT_TOKEN or not GEMINI_API_KEY:
-    raise RuntimeError("❌ Missing BOT_TOKEN or GEMINI_API_KEY environment variables!")
+# Telegram channel & WhatsApp group links
+TELEGRAM_CHANNEL = "@NEET_JEE_GUJ"
+WHATSAPP_LINK = "https://t.me/NEET_JEE_GUJ"
 
-# ===== LOGGING =====
-logging.basicConfig(level=logging.INFO)
-
-# ===== TELEGRAM BOT =====
-requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ===== GLOBAL LOCK (anti-429) =====
-gemini_lock = Lock()
+# Load data.json
+with open("data.json", "r") as f:
+    DATA = json.load(f)
 
-# ===== GEMINI REQUEST =====
-def ask_gemini(prompt, image_bytes=None):
-    with gemini_lock:  # 🚫 one request at a time
-        try:
-            time.sleep(4)  # ⏳ cooldown (VERY IMPORTANT)
+# ---------------- HEALTH CHECK SERVER ----------------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")  # Simple response for health check
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+def run_health_server():
+    server = HTTPServer(("0.0.0.0", 8000), HealthHandler)
+    logging.info("Health-check server running on port 8000")
+    server.serve_forever()
 
-            contents = [{"parts": []}]
+# Start health server in a separate thread
+threading.Thread(target=run_health_server, daemon=True).start()
 
-            if image_bytes:
-                b64 = base64.b64encode(image_bytes).decode("utf-8")
-                contents[0]["parts"].append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": b64
-                    }
-                })
+# ---------------- TELEGRAM BOT ----------------
+@bot.message_handler(commands=['start'])
+def start_menu(msg):
+    chat_id = msg.chat.id
 
-            contents[0]["parts"].append({"text": prompt})
+    # Show join buttons + dismiss
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("✅ Join Telegram Channel", url=f"https://t.me/{TELEGRAM_CHANNEL.lstrip('@')}"))
+    kb.add(types.InlineKeyboardButton("✅ Join WhatsApp Group", url=WHATSAPP_LINK))
+    kb.add(types.InlineKeyboardButton("❌ Dismiss", callback_data="DISMISS_JOIN"))
 
-            payload = {"contents": contents}
+    bot.send_message(chat_id,
+                     "📢 You must join our Telegram Channel and/or WhatsApp Group to access the tests.\n\nAfter joining, press the button below:",
+                     reply_markup=kb)
 
-            res = requests.post(url, json=payload, timeout=60)
-            res.raise_for_status()
+# ---------------- CALLBACK HANDLER ----------------
+@bot.callback_query_handler(func=lambda c: True)
+def callback_handler(call):
+    parts = call.data.split("|")
 
-            data = res.json()
-            return (
-                data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "⚠️ No response from Gemini.")
-                .strip()
-            )
+    # ---------------- Dismiss Join ----------------
+    if call.data == "DISMISS_JOIN":
+        kb = types.InlineKeyboardMarkup()
+        for cls in DATA.keys():
+            kb.add(types.InlineKeyboardButton(text=cls, callback_data=f"STD|{cls}"))
+        bot.edit_message_text("📘 Select Class:", call.message.chat.id,
+                              call.message.message_id, reply_markup=kb)
+        return
 
-        except requests.exceptions.HTTPError as e:
-    if e.response is not None:
-        return f"❌ Gemini HTTP {e.response.status_code}: {e.response.text}"
-    else:
-        return f"❌ Gemini HTTP Error: {e}"
+    # ---------------- CLASS SELECTION ----------------
+    if parts[0] == "STD":
+        cls = parts[1]
+        subjects = DATA.get(cls, {})
+        kb = types.InlineKeyboardMarkup()
+        for sub in subjects.keys():
+            kb.add(types.InlineKeyboardButton(
+                text=sub, callback_data=f"SUBJECT|{cls}|{sub}"
+            ))
+        kb.add(types.InlineKeyboardButton("⬅️ Back", callback_data="BACK_MAIN"))
+        bot.edit_message_text(f"📘 {cls} → Select Subject:", call.message.chat.id,
+                              call.message.message_id, reply_markup=kb)
 
-except requests.exceptions.RequestException as e:
-    return f"❌ Network Error: {e}"
+    # ---------------- SUBJECT SELECTION ----------------
+    elif parts[0] == "SUBJECT":
+        cls, sub = parts[1], parts[2]
+        tests = DATA[cls][sub]
+        kb = types.InlineKeyboardMarkup()
+        for t in tests:
+            kb.add(types.InlineKeyboardButton(
+                text=t["label"],
+                web_app=types.WebAppInfo(WEB_URL + t["path"])
+            ))
+        kb.add(types.InlineKeyboardButton("⬅️ Back", callback_data=f"STD|{cls}"))
+        bot.edit_message_text(f"🧪 {cls} → {sub} → Select Test:", call.message.chat.id,
+                              call.message.message_id, reply_markup=kb)
 
-# ===== COMMANDS =====
-@bot.message_handler(commands=["start"])
-def start(msg):
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton(
-            "📢 Join our Telegram Channel",
-            url="https://t.me/prakash8307"
-        )
-    )
-    bot.reply_to(
-        msg,
-        "📘 *Send your doubt photo*\n"
-        "💬 Or type your question\n\n"
-        "⏳ One request at a time\n"
-        "🚫 Adult content is strictly prohibited.",
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
-
-# ===== TEXT HANDLER =====
-@bot.message_handler(content_types=["text"])
-def text_query(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
-    ans = ask_gemini(msg.text)
-    bot.reply_to(msg, ans[:4000])
-
-# ===== IMAGE HANDLER =====
-@bot.message_handler(content_types=["photo"])
-def image_query(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
-    file_info = bot.get_file(msg.photo[-1].file_id)
-    img = bot.download_file(file_info.file_path)
-    ans = ask_gemini(
-        "Solve this NEET/JEE question step-by-step:",
-        image_bytes=img
-    )
-    bot.reply_to(msg, ans[:4000])
-
-# ===== FLASK HEALTH CHECK =====
-app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "✅ Bot is alive and polling!", 200
-
-# ===== RUN =====
-if __name__ == "__main__":
-    Thread(
-        target=lambda: bot.infinity_polling(skip_pending=True, timeout=60),
-        daemon=True
-    ).start()
-    app.run(host="0.0.0.0", port=PORT)
+    # ---------------- BACK TO MAIN ----------------
+    elif parts[0] == "BACK_MAIN":
+        kb = types.InlineKeyboardMarkup()
+        for cls in DATA.keys():
+            kb.add(types.InlineKeyboardButton(text=cls, callback_data=f"STD|{cls}"))
+        bot.edit_message_text("📘 Select Class:", call.message.chat.id,
+                              call.message.message_id, reply_markup=kb)
+# ---------------- START BOT ----------------
+logging.basicConfig(level=logging.INFO)
+logging.info("🤖 Bot started. Health server running on port 8000.")
+bot.infinity_polling()
