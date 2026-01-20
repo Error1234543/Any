@@ -12,24 +12,30 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+# 🔴 CHANGE HERE (MOST IMPORTANT)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
+
 PORT = int(os.getenv("PORT", 8000))
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
     raise RuntimeError("Missing BOT_TOKEN or GEMINI_API_KEY")
 
 # ===== BOT =====
-requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", timeout=10)
+requests.get(
+    f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
+    timeout=10
+)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ===== LOCK (free safe) =====
+# ===== LOCK =====
 gemini_lock = Lock()
 
 # ===== GEMINI =====
 def ask_gemini(prompt, image_bytes=None):
     with gemini_lock:
         try:
-            time.sleep(3)
+            time.sleep(6)  # 🔴 IMPORTANT DELAY
 
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -57,12 +63,17 @@ def ask_gemini(prompt, image_bytes=None):
             payload = {"contents": [{"parts": parts}]}
 
             r = requests.post(url, json=payload, timeout=60)
+
+            # 🔒 429 HANDLE (NO ERROR TO USER)
+            if r.status_code == 429:
+                return "⚠️ Thoda ruk ke fir try karo."
+
             r.raise_for_status()
 
             return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
-        except Exception as e:
-            return f"Error: {e}"
+        except Exception:
+            return "⚠️ Abhi server busy hai, thoda baad try karo."
 
 # ===== TEXT =====
 @bot.message_handler(content_types=["text"])
