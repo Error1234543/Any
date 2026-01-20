@@ -3,134 +3,96 @@ import base64
 import requests
 import telebot
 import time
-import logging
 from flask import Flask
 from threading import Thread, Lock
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from dotenv import load_dotenv
 
-# ===== CONFIG =====
+# ===== LOAD ENV =====
+load_dotenv()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 PORT = int(os.getenv("PORT", 8000))
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
-    raise RuntimeError("❌ Missing BOT_TOKEN or GEMINI_API_KEY environment variables!")
+    raise RuntimeError("Missing BOT_TOKEN or GEMINI_API_KEY")
 
-# ===== LOGGING =====
-logging.basicConfig(level=logging.INFO)
-
-# ===== TELEGRAM BOT =====
-# Delete webhook to allow polling
+# ===== BOT =====
 requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", timeout=10)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ===== GLOBAL LOCK (anti-429) =====
+# ===== LOCK (free safe) =====
 gemini_lock = Lock()
 
-# ===== GEMINI REQUEST =====
+# ===== GEMINI =====
 def ask_gemini(prompt, image_bytes=None):
-    with gemini_lock:  # one request at a time
+    with gemini_lock:
         try:
-            time.sleep(4)  # cooldown to avoid 429
+            time.sleep(3)
 
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
                 f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
             )
 
-            contents = [{"parts": []}]
+            parts = []
 
             if image_bytes:
-                b64 = base64.b64encode(image_bytes).decode("utf-8")
-                contents[0]["parts"].append({
+                parts.append({
                     "inline_data": {
                         "mime_type": "image/jpeg",
-                        "data": b64
+                        "data": base64.b64encode(image_bytes).decode()
                     }
                 })
 
-            contents[0]["parts"].append({"text": prompt})
+            parts.append({
+                "text": (
+                    "Answer in the SAME language as the question. "
+                    "Be clear and concise.\n\n"
+                    + prompt
+                )
+            })
 
-            payload = {"contents": contents}
+            payload = {"contents": [{"parts": parts}]}
 
-            res = requests.post(url, json=payload, timeout=60)
-            res.raise_for_status()
+            r = requests.post(url, json=payload, timeout=60)
+            r.raise_for_status()
 
-            data = res.json()
-            return (
-                data.get("candidates", [{}])[0]
-                .get("content", {})
-                .get("parts", [{}])[0]
-                .get("text", "⚠️ No response from Gemini.")
-                .strip()
-            )
-
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None:
-                return f"❌ Gemini HTTP {e.response.status_code}: {e.response.text}"
-            return f"❌ Gemini HTTP Error: {e}"
-
-        except requests.exceptions.RequestException as e:
-            return f"❌ Network Error: {e}"
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
         except Exception as e:
-            return f"❌ Unexpected Error: {e}"
+            return f"Error: {e}"
 
-# ===== COMMANDS =====
-@bot.message_handler(commands=["start"])
-def start(msg):
-    markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton(
-            "📢 Join our Telegram Channel",
-            url="https://t.me/prakash8307"
-        )
-    )
-
-    bot.reply_to(
-        msg,
-        "📘 *Send your doubt photo*\n"
-        "💬 Or type your question\n\n"
-        "⏳ One request at a time\n"
-        "🚫 Adult content is strictly prohibited.",
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
-
-# ===== TEXT HANDLER =====
+# ===== TEXT =====
 @bot.message_handler(content_types=["text"])
-def text_query(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
+def handle_text(msg):
     ans = ask_gemini(msg.text)
     bot.reply_to(msg, ans[:4000])
 
-# ===== IMAGE HANDLER =====
+# ===== IMAGE =====
 @bot.message_handler(content_types=["photo"])
-def image_query(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
-
+def handle_image(msg):
     file_info = bot.get_file(msg.photo[-1].file_id)
     img = bot.download_file(file_info.file_path)
 
     ans = ask_gemini(
-        "Solve this NEET/JEE question step-by-step:",
+        "Solve the given question.",
         image_bytes=img
     )
-
     bot.reply_to(msg, ans[:4000])
 
-# ===== FLASK HEALTH CHECK =====
+# ===== HEALTH =====
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "✅ Bot is alive and polling!", 200
+    return "OK", 200
 
 # ===== RUN =====
 if __name__ == "__main__":
     Thread(
-        target=lambda: bot.infinity_polling(skip_pending=True, timeout=60),
+        target=lambda: bot.infinity_polling(skip_pending=True),
         daemon=True
     ).start()
 
