@@ -21,7 +21,8 @@ if not BOT_TOKEN or not GEMINI_API_KEY:
 logging.basicConfig(level=logging.INFO)
 
 # ===== TELEGRAM BOT =====
-requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook")
+# Delete webhook to allow polling
+requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", timeout=10)
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ===== GLOBAL LOCK (anti-429) =====
@@ -29,11 +30,14 @@ gemini_lock = Lock()
 
 # ===== GEMINI REQUEST =====
 def ask_gemini(prompt, image_bytes=None):
-    with gemini_lock:  # 🚫 one request at a time
+    with gemini_lock:  # one request at a time
         try:
-            time.sleep(4)  # ⏳ cooldown (VERY IMPORTANT)
+            time.sleep(4)  # cooldown to avoid 429
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+            )
 
             contents = [{"parts": []}]
 
@@ -63,13 +67,15 @@ def ask_gemini(prompt, image_bytes=None):
             )
 
         except requests.exceptions.HTTPError as e:
-    if e.response is not None:
-        return f"❌ Gemini HTTP {e.response.status_code}: {e.response.text}"
-    else:
-        return f"❌ Gemini HTTP Error: {e}"
+            if e.response is not None:
+                return f"❌ Gemini HTTP {e.response.status_code}: {e.response.text}"
+            return f"❌ Gemini HTTP Error: {e}"
 
-except requests.exceptions.RequestException as e:
-    return f"❌ Network Error: {e}"
+        except requests.exceptions.RequestException as e:
+            return f"❌ Network Error: {e}"
+
+        except Exception as e:
+            return f"❌ Unexpected Error: {e}"
 
 # ===== COMMANDS =====
 @bot.message_handler(commands=["start"])
@@ -81,6 +87,7 @@ def start(msg):
             url="https://t.me/prakash8307"
         )
     )
+
     bot.reply_to(
         msg,
         "📘 *Send your doubt photo*\n"
@@ -102,12 +109,15 @@ def text_query(msg):
 @bot.message_handler(content_types=["photo"])
 def image_query(msg):
     bot.send_chat_action(msg.chat.id, "typing")
+
     file_info = bot.get_file(msg.photo[-1].file_id)
     img = bot.download_file(file_info.file_path)
+
     ans = ask_gemini(
         "Solve this NEET/JEE question step-by-step:",
         image_bytes=img
     )
+
     bot.reply_to(msg, ans[:4000])
 
 # ===== FLASK HEALTH CHECK =====
@@ -123,4 +133,5 @@ if __name__ == "__main__":
         target=lambda: bot.infinity_polling(skip_pending=True, timeout=60),
         daemon=True
     ).start()
+
     app.run(host="0.0.0.0", port=PORT)
