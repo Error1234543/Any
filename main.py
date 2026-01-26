@@ -1,110 +1,66 @@
 import os
-import base64
 import requests
 import telebot
-import time
 from flask import Flask
-from threading import Thread, Lock
+from threading import Thread
 from dotenv import load_dotenv
 
-# ===== LOAD ENV =====
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+PORT = int(os.getenv("PORT", 10000))
 
-# 🔴 CHANGE HERE (MOST IMPORTANT)
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
-
-PORT = int(os.getenv("PORT", 8000))
-
-if not BOT_TOKEN or not GEMINI_API_KEY:
-    raise RuntimeError("Missing BOT_TOKEN or GEMINI_API_KEY")
-
-# ===== BOT =====
-requests.get(
-    f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
-    timeout=10
-)
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# ===== LOCK =====
-gemini_lock = Lock()
-
-# ===== GEMINI =====
-def ask_gemini(prompt, image_bytes=None):
-    with gemini_lock:
-        try:
-            time.sleep(6)  # 🔴 IMPORTANT DELAY
-
-            url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-            )
-
-            parts = []
-
-            if image_bytes:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": base64.b64encode(image_bytes).decode()
-                    }
-                })
-
-            parts.append({
-                "text": (
-                    "Answer in the SAME language as the question. "
-                    "Be clear and concise.\n\n"
-                    + prompt
-                )
-            })
-
-            payload = {"contents": [{"parts": parts}]}
-
-            r = requests.post(url, json=payload, timeout=60)
-
-            # 🔒 429 HANDLE (NO ERROR TO USER)
-            if r.status_code == 429:
-                return "⚠️ Thoda ruk ke fir try karo."
-
-            r.raise_for_status()
-
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
-
-        except Exception:
-            return "⚠️ Abhi server busy hai, thoda baad try karo."
-
-# ===== TEXT =====
-@bot.message_handler(content_types=["text"])
-def handle_text(msg):
-    ans = ask_gemini(msg.text)
-    bot.reply_to(msg, ans[:4000])
-
-# ===== IMAGE =====
-@bot.message_handler(content_types=["photo"])
-def handle_image(msg):
-    file_info = bot.get_file(msg.photo[-1].file_id)
-    img = bot.download_file(file_info.file_path)
-
-    ans = ask_gemini(
-        "Solve the given question.",
-        image_bytes=img
-    )
-    bot.reply_to(msg, ans[:4000])
-
-# ===== HEALTH =====
 app = Flask(__name__)
+
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY
+)
+
+def ask_gemini(question):
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": f"""
+You are an expert NEET/JEE teacher.
+Answer in the SAME language as the question.
+Explain step by step.
+Question:
+{question}
+"""
+            }]
+        }]
+    }
+    r = requests.post(GEMINI_URL, json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+@bot.message_handler(commands=['start'])
+def start(msg):
+    bot.reply_to(
+        msg,
+        "👋 NEET/JEE Doubt Solver Bot\n"
+        "Gujarati / Hindi / English me question bhejo"
+    )
+
+@bot.message_handler(content_types=['text'])
+def solve(msg):
+    try:
+        bot.send_chat_action(msg.chat.id, "typing")
+        ans = ask_gemini(msg.text)
+        bot.reply_to(msg, ans)
+    except Exception:
+        bot.reply_to(msg, "⚠️ Abhi server busy hai, thoda baad try karo.")
 
 @app.route("/")
 def home():
-    return "OK", 200
+    return "Bot is running!"
 
-# ===== RUN =====
+def run_bot():
+    bot.infinity_polling(skip_pending=True)
+
 if __name__ == "__main__":
-    Thread(
-        target=lambda: bot.infinity_polling(skip_pending=True),
-        daemon=True
-    ).start()
-
+    Thread(target=run_bot).start()
     app.run(host="0.0.0.0", port=PORT)
