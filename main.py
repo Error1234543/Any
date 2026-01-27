@@ -1,51 +1,37 @@
 import os
-import time
-import base64
 import io
+import base64
 import requests
 import telebot
 from flask import Flask
 from threading import Thread
-from dotenv import load_dotenv
 from PIL import Image
 
-# ================= LOAD ENV =================
-load_dotenv()
-
+# ================== ENV ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 PORT = int(os.getenv("PORT", 10000))
 
-# ================= BOT & APP =================
+GEMINI_MODEL = "gemini-2.0-flash"
+
+# ================== BOT ==================
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# ================= GEMINI URL =================
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 )
 
-# ================= COOLDOWN =================
-user_last_time = {}
-
-def can_ask(user_id, gap=8):
-    now = time.time()
-    if user_id in user_last_time and now - user_last_time[user_id] < gap:
-        return False
-    user_last_time[user_id] = now
-    return True
-
-# ================= GEMINI ASK =================
-def ask_gemini(prompt_text, image_base64=None):
+# ================== GEMINI ==================
+def ask_gemini(text, image_b64=None):
     parts = []
 
-    if image_base64:
+    if image_b64:
         parts.append({
             "inline_data": {
                 "mime_type": "image/jpeg",
-                "data": image_base64
+                "data": image_b64
             }
         })
 
@@ -53,94 +39,82 @@ def ask_gemini(prompt_text, image_base64=None):
         "text": (
             "You are an expert NEET/JEE teacher.\n"
             "Answer in the SAME language as the question.\n"
-            "Explain step by step, exam-oriented.\n\n"
-            f"{prompt_text}"
+            "Explain step by step, simple and clear.\n\n"
+            f"{text}"
         )
     })
 
     payload = {"contents": [{"parts": parts}]}
 
-    r = requests.post(GEMINI_URL, json=payload, timeout=60)
-    r.raise_for_status()
-    data = r.json()
+    r = requests.post(GEMINI_URL, json=payload, timeout=45)
 
+    if r.status_code != 200:
+        return "⚠️ Abhi thoda load hai. 10 second baad try karo."
+
+    data = r.json()
     if "candidates" not in data:
-        raise Exception(data)
+        return "⚠️ Question thoda clear bhejo."
 
     return data["candidates"][0]["content"]["parts"][-1]["text"]
 
-# ================= START =================
+# ================== START ==================
 @bot.message_handler(commands=["start"])
 def start(msg):
     bot.reply_to(
         msg,
-        "👋 <b>NEET / JEE Doubt Solver Bot</b>\n\n"
-        "📝 Text doubt bhejo\n"
-        "📸 Image doubt bhejo\n"
+        "👋 <b>NEET / JEE Doubt Solver</b>\n\n"
+        "📝 Text question bhejo\n"
+        "📸 Image question bhejo\n"
         "📸➕📝 Image ke sath text bhi bhej sakte ho\n\n"
-        "🌐 Gujarati | Hindi | English\n"
-        "✅ Same language me answer milega\n\n"
-        "✍️ Ab apna question bhejo 👇"
+        "Gujarati | Hindi | English\n"
+        "Same language me answer milega ✅"
     )
 
-# ================= TEXT DOUBT =================
+# ================== TEXT ==================
 @bot.message_handler(content_types=["text"])
 def text_doubt(msg):
-    if not can_ask(msg.from_user.id):
-        bot.reply_to(msg, "⏳ Thoda ruk kar dobara bhejo.")
-        return
+    bot.send_chat_action(msg.chat.id, "typing")
+    ans = ask_gemini(f"Question:\n{msg.text}")
+    bot.reply_to(msg, ans)
 
-    try:
-        bot.send_chat_action(msg.chat.id, "typing")
-        ans = ask_gemini(f"Question:\n{msg.text}")
-        bot.reply_to(msg, ans)
-    except Exception as e:
-        print("TEXT ERROR:", e)
-        bot.reply_to(msg, "⚠️ Abhi server busy hai, thoda baad try karo.")
-
-# ================= IMAGE DOUBT =================
+# ================== IMAGE ==================
 @bot.message_handler(content_types=["photo"])
 def image_doubt(msg):
-    if not can_ask(msg.from_user.id):
-        bot.reply_to(msg, "⏳ Thoda ruk kar dobara bhejo.")
-        return
+    bot.send_chat_action(msg.chat.id, "typing")
 
     try:
-        bot.send_chat_action(msg.chat.id, "typing")
-
         file_id = msg.photo[-1].file_id
         file_info = bot.get_file(file_id)
         file_bytes = bot.download_file(file_info.file_path)
 
-        # ---- Resize + JPEG force ----
+        # SIMPLE + SAFE image handling
         image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-        image.thumbnail((1024, 1024))
+        image.thumbnail((800, 800))
 
-        buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", quality=85)
-        image_base64 = base64.b64encode(buffer.getvalue()).decode()
+        buf = io.BytesIO()
+        image.save(buf, format="JPEG", quality=80)
+        image_b64 = base64.b64encode(buf.getvalue()).decode()
 
         caption = msg.caption or "Solve the question shown in the image."
 
         ans = ask_gemini(
-            f"Question (image based):\n{caption}",
-            image_base64=image_base64
+            f"Question (from image):\n{caption}",
+            image_b64
         )
 
         bot.reply_to(msg, ans)
 
-    except Exception as e:
-        print("IMAGE ERROR:", e)
+    except:
         bot.reply_to(
             msg,
-            "⚠️ Image read nahi ho pa rahi.\n"
-            "Clear photo bhejo ya thoda baad try karo."
+            "⚠️ Image clear nahi hai.\n"
+            "Straight photo bhejo (crop mat karo)."
         )
 
-# ================= FLASK =================
+# ================== FLASK ==================
 @app.route("/")
 def home():
-    return "Bot is running!"
+    return "Bot running"
 
 def run_bot():
     bot.infinity_polling(skip_pending=True)
