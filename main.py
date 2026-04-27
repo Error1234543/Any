@@ -1,124 +1,82 @@
 import os
-import io
-import base64
-import requests
-import telebot
-from flask import Flask
-from threading import Thread
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Message
+from aiogram.filters import Command
+import google.generativeai as genai
 from PIL import Image
+import io
 
-# ========== ENV ==========
+# CONFIG
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-PORT = int(os.getenv("PORT", 10000))
 
-# ✅ FREE + STABLE MODEL
-GEMINI_MODEL = "gemini-1.5-flash"
+# Gemini setup
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
-# ========== BOT ==========
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-app = Flask(__name__)
+# Bot setup
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-GEMINI_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-)
+logging.basicConfig(level=logging.INFO)
 
-# ========== GEMINI ==========
-def ask_gemini(text, image_b64=None):
-    parts = []
-
-    if image_b64:
-        parts.append({
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": image_b64
-            }
-        })
-
-    parts.append({
-        "text": (
-            "You are an expert NEET/JEE teacher.\n"
-            "Answer in the SAME language as the question.\n"
-            "Explain step by step, simple and clear.\n\n"
-            f"{text}"
-        )
-    })
-
-    payload = {"contents": [{"parts": parts}]}
-
-    r = requests.post(GEMINI_URL, json=payload, timeout=40)
-
-    if r.status_code != 200:
-        return "⏳ Thoda wait karo aur fir try karo."
-
-    data = r.json()
-    if "candidates" not in data:
-        return "⚠️ Question clear bhejo."
-
-    return data["candidates"][0]["content"]["parts"][-1]["text"]
-
-# ========== START ==========
-@bot.message_handler(commands=["start"])
-def start(msg):
-    bot.reply_to(
-        msg,
-        "👋 <b>NEET / JEE Doubt Solver</b>\n\n"
-        "📝 Text question bhejo\n"
-        "📸 Image question bhejo\n"
-        "📸➕📝 Image ke sath text bhi bhej sakte ho\n\n"
-        "Gujarati | Hindi | English\n"
-        "Same language me answer milega ✅"
+# START COMMAND
+@dp.message(Command("start"))
+async def start_cmd(message: Message):
+    await message.answer(
+        "🚀 *Welcome to AI Doubt Solver Bot*\n\n"
+        "📚 NEET/JEE Doubts Solve in seconds\n"
+        "🖼 Send Image or Text Question\n\n"
+        "⚡ Powered by Gemini AI\n\n"
+        "👉 Just send your question!",
+        parse_mode="Markdown"
     )
 
-# ========== TEXT ==========
-@bot.message_handler(content_types=["text"])
-def text_doubt(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
-    ans = ask_gemini(f"Question:\n{msg.text}")
-    bot.reply_to(msg, ans)
+# TEXT DOUBT SOLVER
+@dp.message()
+async def solve_text(message: Message):
+    if message.text:
+        await message.answer("⏳ Solving your doubt...")
 
-# ========== IMAGE ==========
-@bot.message_handler(content_types=["photo"])
-def image_doubt(msg):
-    bot.send_chat_action(msg.chat.id, "typing")
+        try:
+            response = model.generate_content(
+                f"Solve this question step by step for a NEET/JEE student:\n{message.text}"
+            )
+
+            await message.answer(response.text)
+
+        except Exception as e:
+            await message.answer(f"❌ Error: {e}")
+
+# IMAGE DOUBT SOLVER
+@dp.message(lambda msg: msg.photo)
+async def solve_image(message: Message):
+    await message.answer("🧠 Reading image and solving...")
 
     try:
-        file_id = msg.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        file_bytes = bot.download_file(file_info.file_path)
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        file_data = await bot.download_file(file.file_path)
 
-        image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-        image.thumbnail((800, 800))
+        image = Image.open(io.BytesIO(file_data.read()))
 
-        buf = io.BytesIO()
-        image.save(buf, format="JPEG", quality=80)
-        image_b64 = base64.b64encode(buf.getvalue()).decode()
-
-        caption = msg.caption or "Solve the question shown in the image."
-
-        ans = ask_gemini(
-            f"Question (from image):\n{caption}",
-            image_b64
+        response = model.generate_content(
+            [
+                "Solve this question from the image step by step for NEET/JEE student:",
+                image
+            ]
         )
 
-        bot.reply_to(msg, ans)
+        await message.answer(response.text)
 
-    except:
-        bot.reply_to(
-            msg,
-            "⚠️ Image clear nahi hai.\n"
-            "Straight, clear photo bhejo."
-        )
+    except Exception as e:
+        await message.answer(f"❌ Error: {e}")
 
-# ========== FLASK ==========
-@app.route("/")
-def home():
-    return "Bot running"
-
-def run_bot():
-    bot.infinity_polling(skip_pending=True)
+# RUN BOT
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    Thread(target=run_bot).start()
-    app.run(host="0.0.0.0", port=PORT)
+    import asyncio
+    asyncio.run(main())
