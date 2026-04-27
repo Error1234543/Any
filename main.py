@@ -28,7 +28,7 @@ async def start_cmd(message: Message):
         "🚀 *Welcome to AI Doubt Solver Bot*\n\n"
         "📚 NEET/JEE Doubts Solve in seconds\n"
         "🖼 Send Image or Text Question\n\n"
-        "⚡ Powered by Gemini AI\n\n"
+        "⚡ Powered by sonic\n\n"
         "👉 Just send your question!",
         parse_mode="Markdown"
     )
