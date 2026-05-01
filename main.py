@@ -15,7 +15,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-OWNER_ID = int(os.getenv("OWNER_ID", "7447651332"))
+OWNER_ID = int(os.getenv("OWNER_ID", "8226637107"))
 PORT = int(os.getenv("PORT", 8000))
 
 if not BOT_TOKEN or not GEMINI_API_KEY:
