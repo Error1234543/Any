@@ -14,7 +14,7 @@ load_dotenv()
 # ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 OWNER_ID = int(os.getenv("OWNER_ID", "8226637107"))
 PORT = int(os.getenv("PORT", 8000))
 
